@@ -170,6 +170,7 @@ pipeline {
         always {
             // Clean up dangling build containers
             // sh 'docker rm -f todo-smoke || true'
+            echo "Cleanup complete."
         }
     }
 }
