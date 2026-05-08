@@ -16,13 +16,13 @@ pipeline {
 
         // Nexus
         NEXUS_CREDS        = credentials('nexus-creds')
-        NEXUS_URL          = 'local-nexus:8082'             // Docker registry port
-        NEXUS_RAW_URL      = 'http://local-nexus:8081'      // Nexus UI/API base
+        NEXUS_URL          = 'localhost:8082'             // Docker registry port
+        NEXUS_RAW_URL      = 'http://localhost:8081'      // Nexus UI/API base
         NEXUS_RAW_REPO     = 'todo-raw'                     // raw repo name you created
-        NEXUS_DOCKER_IMAGE = "local-nexus:8082/${params.IMAGE_NAME}:${env.BUILD_NUMBER}"
+        NEXUS_DOCKER_IMAGE = "localhost:8082/${params.IMAGE_NAME}:${env.BUILD_NUMBER}"
 
         // Sonar
-        SONAR_TOKEN = credentials('sonar-token')
+        SONAR_TOKEN = credentials('sonar-token')    
     }
 
     stages {
@@ -160,14 +160,14 @@ pipeline {
     }
 
     post {
-        always {
-            sh 'docker rm -f todo-smoke || true'
-        }
-        success {
-            echo "✅ Done."
-        }
-        failure {
-            echo "❌ Failed."
-        }
+    always {
+        sh 'docker rm -f todo-smoke || true'
     }
+    success {
+        echo "✅ Done. Image: ${FULL_IMAGE}"
+    }
+    failure {
+        echo "❌ Failed."
+    }
+}
 }
