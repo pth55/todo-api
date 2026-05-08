@@ -149,7 +149,7 @@ pipeline {
                     docker run -d --name todo-smoke -p 5001:5000 ${FULL_IMAGE}
                     sleep 3
                     curl -f http://localhost:5001/todos
-                    docker rm -f todo-smoke
+                    docker rm -f todo-smoke || true
                     echo "✅ Smoke test passed"
                 """
             }
@@ -157,14 +157,20 @@ pipeline {
     }
 
     post {
-        always {
-            sh 'docker rm -f todo-smoke || true'
-        }
         success {
-            echo "✅ Done. Image: ${FULL_IMAGE}"
+            echo """
+            ✅ Pipeline complete!
+            DockerHub : ${FULL_IMAGE}
+            Nexus img : ${NEXUS_DOCKER_IMAGE}
+            Nexus rpt : ${NEXUS_RAW_URL}/#browse/browse:${NEXUS_RAW_REPO}
+            """
         }
         failure {
-            echo "❌ Failed."
+            echo "❌ Pipeline failed. Check stage logs."
+        }
+        always {
+            // Clean up dangling build containers
+            sh 'docker rm -f todo-smoke || true'
         }
     }
 }
