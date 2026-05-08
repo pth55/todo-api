@@ -148,7 +148,7 @@ pipeline {
                     docker rm -f todo-smoke || true
                     docker run -d --name todo-smoke -p 5001:5000 ${FULL_IMAGE}
                     sleep 3
-                    curl -f http://localhost:5001/todos
+                    curl -f http://localhost:5000/todos
                     docker rm -f todo-smoke || true
                     echo "✅ Smoke test passed"
                 """
