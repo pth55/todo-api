@@ -145,8 +145,7 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh """
-                    docker rm -f todo-smoke || true
-                    docker run -d --name todo-smoke -p 5001:5000 ${FULL_IMAGE}
+                    docker run -d --name todo-smoke -p 5000:5000 ${FULL_IMAGE}
                     sleep 3
                     curl -f http://localhost:5000/todos
                     docker rm -f todo-smoke || true
