@@ -37,8 +37,8 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    pip install --upgrade pip -q
-                    pip install -r requirements.txt -q
+                    pip install --upgrade pip --break-system-packages -q
+                    pip install -r requirements.txt --break-system-packages -q
                 '''
             }
         }
@@ -90,7 +90,7 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 sh """
-                    pip install pysonar-scanner -q
+                    pip install pysonar-scanner --break-system-packages -q
                     python -m pysonar_scanner \
                       -Dsonar.projectKey=todo-app \
                       -Dsonar.sources=. \
