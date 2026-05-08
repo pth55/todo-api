@@ -1,83 +1,42 @@
 pipeline {
 
-    // ── AGENT ────────────────────────────────────────────────────────────────
-    // agent any  →  run on Jenkins master container itself
-    // Since our Jenkins container has Docker socket mounted, it CAN run docker
-    // commands directly. We use agent any + sh 'docker ...' for simplicity.
     agent any
 
-    // ── PARAMETERS ───────────────────────────────────────────────────────────
     parameters {
-        string(
-            name: 'DOCKER_IMAGE_NAME',
-            defaultValue: 'todo-app',
-            description: 'Docker image name (without registry prefix)'
-        )
-        choice(
-            name: 'ENVIRONMENT',
-            choices: ['dev', 'staging', 'prod'],
-            description: 'Target deployment environment'
-        )
-        booleanParam(
-            name: 'PUSH_TO_DOCKERHUB',
-            defaultValue: true,
-            description: 'Push image to DockerHub after build?'
-        )
+        string(name: 'IMAGE_NAME', defaultValue: 'todo-app', description: 'Docker image name')
+        booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push to DockerHub?')
+        booleanParam(name: 'PUSH_NEXUS', defaultValue: true, description: 'Push to Nexus?')
     }
 
-    // ── ENVIRONMENT VARIABLES ────────────────────────────────────────────────
     environment {
-        // Static values
-        APP_PORT        = '5000'
-        SONAR_HOST_URL  = 'http://local-sonar:9000'   // sonarqube container name = hostname inside Docker network
+        // DockerHub
+        DOCKERHUB_CREDS = credentials('mydoc')
+        FULL_IMAGE      = "${DOCKERHUB_CREDS_USR}/${params.IMAGE_NAME}:${env.BUILD_NUMBER}"
+        FULL_LATEST     = "${DOCKERHUB_CREDS_USR}/${params.IMAGE_NAME}:latest"
 
-        // Computed from built-in Jenkins vars + params
-        IMAGE_TAG       = "${params.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}"
-        IMAGE_LATEST    = "${params.DOCKER_IMAGE_NAME}:latest"
+        // Nexus
+        NEXUS_CREDS        = credentials('nexus-creds')
+        NEXUS_URL          = 'local-nexus:8082'             // Docker registry port
+        NEXUS_RAW_URL      = 'http://local-nexus:8081'      // Nexus UI/API base
+        NEXUS_RAW_REPO     = 'todo-raw'                     // raw repo name you created
+        NEXUS_DOCKER_IMAGE = "local-nexus:8082/${params.IMAGE_NAME}:${env.BUILD_NUMBER}"
 
-        // --- Credentials (set these in Jenkins UI first) ---
-        // Jenkins UI → Manage Jenkins → Credentials → Global
-        // ID: dockerhub-creds  → Username/Password → your DockerHub login
-        // ID: sonar-token      → Secret Text       → your SonarQube token
-        DOCKERHUB_CREDS = credentials('dockerhub-creds')
-        // ^ creates two vars automatically:
-        //   DOCKERHUB_CREDS_USR  = your DockerHub username
-        //   DOCKERHUB_CREDS_PSW  = your DockerHub password
-
-        SONAR_TOKEN     = credentials('sonar-token')
-
-        // Full image name with registry user prefix
-        FULL_IMAGE      = "${DOCKERHUB_CREDS_USR}/${IMAGE_TAG}"
-        FULL_LATEST     = "${DOCKERHUB_CREDS_USR}/${IMAGE_LATEST}"
+        // Sonar
+        SONAR_TOKEN = credentials('sonar-token')
     }
 
-    // ── OPTIONS ──────────────────────────────────────────────────────────────
-    options {
-        timeout(time: 20, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '5'))
-        disableConcurrentBuilds()
-        timestamps()
-    }
-
-    // ── STAGES ───────────────────────────────────────────────────────────────
     stages {
 
         stage('Checkout') {
             steps {
-                echo "=== Checking out branch: ${env.GIT_BRANCH} ==="
-                // 'checkout scm' uses the SCM config from the pipeline job itself
-                // (the repo URL and branch you set when creating the job in Jenkins UI)
                 checkout scm
-                echo "Commit: ${env.GIT_COMMIT}"
+                echo "Branch: ${env.GIT_BRANCH} | Commit: ${env.GIT_COMMIT}"
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                echo "=== Installing Python dependencies ==="
                 sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
                     pip install --upgrade pip -q
                     pip install -r requirements.txt -q
                 '''
@@ -86,90 +45,138 @@ pipeline {
 
         stage('Run Tests') {
             steps {
-                echo "=== Running tests with coverage ==="
                 sh '''
-                    . venv/bin/activate
                     pytest -v \
                       --cov=app \
-                      --cov-report=xml:coverage.xml \
                       --cov-report=term-missing \
+                      --cov-report=html:coverage-report \
                       --junitxml=test-results.xml
                 '''
             }
             post {
                 always {
-                    // Publish JUnit test results in Jenkins UI
                     junit 'test-results.xml'
                 }
             }
         }
 
+        stage('Publish Test Report to Nexus') {
+            // Push the HTML coverage report as a zip to Nexus raw repo
+            // So it's permanently stored and downloadable from Nexus UI
+            when {
+                expression { return params.PUSH_NEXUS }
+            }
+            steps {
+                sh """
+                    # Zip the HTML coverage report
+                    zip -r coverage-report-${env.BUILD_NUMBER}.zip coverage-report/
+
+                    # Upload to Nexus raw repo using curl
+                    # Nexus raw upload URL format:
+                    # POST /repository/<repo-name>/<path/to/file>
+                    curl -u ${NEXUS_CREDS_USR}:${NEXUS_CREDS_PSW} \
+                         --upload-file coverage-report-${env.BUILD_NUMBER}.zip \
+                         ${NEXUS_RAW_URL}/repository/${NEXUS_RAW_REPO}/todo-app/build-${env.BUILD_NUMBER}/coverage-report.zip
+
+                    echo "✅ Coverage report uploaded to Nexus"
+                    echo "📦 View at: ${NEXUS_RAW_URL}/#browse/browse:${NEXUS_RAW_REPO}"
+                """
+
+                // Also archive in Jenkins UI as a quick download link
+                archiveArtifacts artifacts: 'test-results.xml', fingerprint: true
+            }
+        }
+
         stage('SonarQube Analysis') {
             steps {
-                echo "=== Running SonarQube analysis ==="
                 sh """
-                    . venv/bin/activate
-                    pip install coverage -q
-                    sonar-scanner \
+                    pip install pysonar-scanner -q
+                    python -m pysonar_scanner \
                       -Dsonar.projectKey=todo-app \
                       -Dsonar.sources=. \
-                      -Dsonar.python.coverage.reportPaths=coverage.xml \
-                      -Dsonar.host.url=${SONAR_HOST_URL} \
+                      -Dsonar.host.url=http://local-sonar:9000 \
                       -Dsonar.token=${SONAR_TOKEN} \
-                      -Dsonar.exclusions=venv/**,tests/**
+                      -Dsonar.exclusions=tests/**
                 """
             }
         }
 
         stage('Docker Build') {
             steps {
-                echo "=== Building Docker image: ${FULL_IMAGE} ==="
-                sh "docker build -t ${FULL_IMAGE} -t ${FULL_LATEST} ."
+                sh """
+                    # Build once, tag for both DockerHub and Nexus
+                    docker build \
+                      -t ${FULL_IMAGE} \
+                      -t ${FULL_LATEST} \
+                      -t ${NEXUS_DOCKER_IMAGE} \
+                      .
+                """
             }
         }
 
-        stage('Docker Push') {
+        stage('Push to DockerHub') {
             when {
-                // Only push if param says so
-                expression { return params.PUSH_TO_DOCKERHUB }
+                expression { return params.PUSH_IMAGE }
             }
             steps {
-                echo "=== Pushing to DockerHub as ${DOCKERHUB_CREDS_USR} ==="
                 sh """
                     echo ${DOCKERHUB_CREDS_PSW} | docker login -u ${DOCKERHUB_CREDS_USR} --password-stdin
                     docker push ${FULL_IMAGE}
                     docker push ${FULL_LATEST}
                     docker logout
+                    echo "✅ Pushed to DockerHub: ${FULL_IMAGE}"
                 """
             }
         }
 
-        stage('Verify Running Container') {
+        stage('Push to Nexus Docker Registry') {
+            when {
+                expression { return params.PUSH_NEXUS }
+            }
             steps {
-                echo "=== Smoke test — run container and hit /todos ==="
                 sh """
-                    docker run -d --name todo-smoke-test -p 5001:5000 ${FULL_IMAGE}
+                    # Login to Nexus Docker registry (port 8082)
+                    echo ${NEXUS_CREDS_PSW} | docker login ${NEXUS_URL} \
+                         -u ${NEXUS_CREDS_USR} --password-stdin
+
+                    docker push ${NEXUS_DOCKER_IMAGE}
+
+                    docker logout ${NEXUS_URL}
+                    echo "✅ Pushed to Nexus: ${NEXUS_DOCKER_IMAGE}"
+                    echo "📦 View at: ${NEXUS_RAW_URL}/#browse/browse:todo-docker"
+                """
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh """
+                    docker rm -f todo-smoke || true
+                    docker run -d --name todo-smoke -p 5001:5000 ${FULL_IMAGE}
                     sleep 3
-                    curl -f http://localhost:5001/todos || (docker rm -f todo-smoke-test && exit 1)
-                    docker rm -f todo-smoke-test
+                    curl -f http://localhost:5001/todos
+                    docker rm -f todo-smoke
+                    echo "✅ Smoke test passed"
                 """
             }
         }
     }
 
-    // ── POST ─────────────────────────────────────────────────────────────────
     post {
-        always {
-            echo "=== Cleaning workspace ==="
-            sh 'rm -rf venv __pycache__ .pytest_cache'
-            cleanWs()
-        }
         success {
-            echo "✅ Pipeline passed! Image: ${FULL_IMAGE} — Environment: ${params.ENVIRONMENT}"
+            echo """
+            ✅ Pipeline complete!
+            DockerHub : ${FULL_IMAGE}
+            Nexus img : ${NEXUS_DOCKER_IMAGE}
+            Nexus rpt : ${NEXUS_RAW_URL}/#browse/browse:${NEXUS_RAW_REPO}
+            """
         }
         failure {
-            echo "❌ Pipeline FAILED at stage. Check logs above."
-            // Add slackSend or emailext here when you have those plugins
+            echo "❌ Pipeline failed. Check stage logs."
+        }
+        always {
+            // Clean up dangling build containers
+            sh 'docker rm -f todo-smoke || true'
         }
     }
 }
