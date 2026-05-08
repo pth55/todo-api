@@ -155,7 +155,7 @@ pipeline {
         }
     }
 
-    post {c
+    post {
         success {
             echo """
             ✅ Pipeline complete!
