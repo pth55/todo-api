@@ -160,20 +160,14 @@ pipeline {
     }
 
     post {
+        always {
+            sh 'docker rm -f todo-smoke || true'
+        }
         success {
-            echo """
-            ✅ Pipeline complete!
-            DockerHub : ${FULL_IMAGE}
-            Nexus img : ${NEXUS_DOCKER_IMAGE}
-            Nexus rpt : ${NEXUS_RAW_URL}/#browse/browse:${NEXUS_RAW_REPO}
-            """
+            echo "✅ Done."
         }
         failure {
-            echo "❌ Pipeline failed. Check stage logs."
-        }
-        always {
-            // Clean up dangling build containers
-            sh 'docker rm -f todo-smoke || true'
+            echo "❌ Failed."
         }
     }
 }
