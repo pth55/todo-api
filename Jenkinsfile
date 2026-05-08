@@ -36,10 +36,7 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    pip install --upgrade pip --break-system-packages -q
-                    pip install -r requirements.txt --break-system-packages -q
-                '''
+                sh 'pip install -r requirements.txt --break-system-packages -q'
             }
         }
 
