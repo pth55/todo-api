@@ -3,7 +3,7 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'IMAGE_NAME', defaultValue: 'todo-app', description: 'Docker image name')
+        string(name: 'IMAGE_NAME', defaultValue: 'todo-api', description: 'Docker image name')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push to DockerHub?')
         booleanParam(name: 'PUSH_NEXUS', defaultValue: true, description: 'Push to Nexus?')
     }
@@ -23,7 +23,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -37,7 +36,9 @@ pipeline {
             }
         }
 
+
         stage('Run Tests') {
+
             steps {
                 sh '''
                     pytest -v \
@@ -47,11 +48,13 @@ pipeline {
                       --junitxml=test-results.xml
                 '''
             }
+
             post {
                 always {
                     junit 'test-results.xml'
                 }
             }
+
         }
 
         stage('Publish Test Report to Nexus') {
@@ -60,6 +63,7 @@ pipeline {
             when {
                 expression { return params.PUSH_NEXUS }
             }
+
             steps {
                 sh """
                     # Zip the HTML coverage report
@@ -70,7 +74,7 @@ pipeline {
                     # POST /repository/<repo-name>/<path/to/file>
                     curl -u ${NEXUS_CREDS_USR}:${NEXUS_CREDS_PSW} \
                          --upload-file coverage-report-${env.BUILD_NUMBER}.zip \
-                         ${NEXUS_RAW_URL}/repository/${NEXUS_RAW_REPO}/todo-app/build-${env.BUILD_NUMBER}/coverage-report.zip
+                         ${NEXUS_RAW_URL}/repository/${NEXUS_RAW_REPO}/todo-api/build-${env.BUILD_NUMBER}/coverage-report.zip
 
                     echo "✅ Coverage report uploaded to Nexus"
                     echo "📦 View at: ${NEXUS_RAW_URL}/#browse/browse:${NEXUS_RAW_REPO}"
@@ -86,7 +90,7 @@ pipeline {
                 sh """
                     pip install pysonar-scanner --break-system-packages -q
                     python -m pysonar_scanner \
-                      -Dsonar.projectKey=todo-app \
+                      -Dsonar.projectKey=todo-api \
                       -Dsonar.sources=. \
                       -Dsonar.host.url=http://local-sonar:9000 \
                       -Dsonar.token=${SONAR_TOKEN} \
@@ -127,6 +131,8 @@ pipeline {
             when {
                 expression { return params.PUSH_NEXUS }
             }
+
+
             steps {
                 sh """
                     # Login to Nexus Docker registry (port 8082)
@@ -169,4 +175,6 @@ pipeline {
             echo "Cleanup complete."
         }
     }
+
+
 }

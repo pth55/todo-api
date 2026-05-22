@@ -1,0 +1,73 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest -v \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=html:coverage-report \
+            --junitxml=test-results.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: test-results.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage-report/
+
+      - name: Build and Push Docker Image
+        if: github.event_name == 'push'
+        run: |
+          echo ${{ secrets.DOCKERHUB_PASSWORD }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:${{ github.run_number }} .
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:${{ github.run_number }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/todo-api:latest
+          docker logout
+
+      # - name: Publish coverage report to Nexus
+      #   if: github.event_name == 'push'
+      #   run: |
+      #     zip -r coverage-report-${{ github.run_number }}.zip coverage-report/
+      #     curl -u ${{ secrets.NEXUS_USERNAME }}:${{ secrets.NEXUS_PASSWORD }} \
+      #          --upload-file coverage-report-${{ github.run_number }}.zip \
+      #          http://local-nexus:8081/repository/todo-raw/todo-api/build-${{ github.run_number }}/coverage-report.zip
+
+      # - name: SonarQube Analysis
+      #   run: |
+      #     pip install pysonar-scanner
+      #     python -m pysonar_scanner \
+      #       -Dsonar.projectKey=todo-api \
+      #       -Dsonar.sources=. \
+      #       -Dsonar.host.url=http://local-sonar:9000 \
+      #       -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+      #       -Dsonar.exclusions=tests/**
